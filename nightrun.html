@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+<title>NightRun</title>
+<script type="text/javascript">
+	function init(){
+		function l(s){return document.getElementById(s);}
+		var fps=50,mouseX=0,mouseY=0,gameState=0,
+		run = (function() {
+			function l(s){return document.getElementById(s);};
+			var loops = 0,q=0, skipTicks = 1000 / fps,maxFrameSkip = 10,nextGameTick = (new Date()).getTime();
+			return function() {
+				loops = 0;
+				var ct = (new Date()).getTime();
+				if(ct-nextGameTick>skipTicks*4)nextGameTick=ct-20;
+				while ((new Date()).getTime() > nextGameTick && loops < maxFrameSkip) {
+					update();
+					nextGameTick += skipTicks;
+					loops++;
+					q=0;
+				}
+				if(q++<2)render();
+			};
+		})();
+		//First-time initialization
+		var speed,
+			position,
+			ppos,
+			crouched,
+			curTerrainLevel,
+			player,
+			playerAnimation,
+			obstacles=[],
+			prohibitTerr=[],
+			gameTicks,
+			musicOn=true; 
+			hacked=false,
+			stars=[],
+			keyMap={JUMP:-1,CROUCH:-2},
+			seekBind=0,
+			jkp=false,
+			ckp=false,
+			highScore=0,
+			firstGame=true;
+		const PLAYER_COLOR='#61F294',DISTANCE_BETWEEN_BARS=115, GRAVITY=-0.8, PLAYER_WIDTH=25, PLAYER_HEIGHT={STANDING:58,CROUCHED:25}, PLAYER_OFFSET = 40, OBSTACLES={TERRAIN:0, RECTANGLE:1, NONE:2};
+		var canvas = l('c');
+		loadUp();
+		l('c').addEventListener("mousemove",function(e){
+			mouseX= e.clientX - canvas.getBoundingClientRect().left;
+			mouseY= e.clientY - canvas.getBoundingClientRect().top;
+		});
+		l('c').addEventListener("mousedown",function(e){
+			if(gameState===1){
+				if(e.button===0){
+					if(keyMap.JUMP===-1)jump();
+					if(keyMap.CROUCH===-1)crouch();
+				}
+				if(e.button===2){
+					if(keyMap.JUMP===-2)jump();
+					else if(keyMap.CROUCH===-2)crouch();
+				}
+			}else if(gameState===0){
+				if(isMouseInControl(0)){
+					startGame();
+				}
+				if(isMouseInControl(1)){
+					gameState=2;
+				}
+			}else if(gameState===2){
+				if(seekBind===0){
+					if(isMouseInControl(1))gameState=0;
+					if(isMouseInControl(4))musicOn=!musicOn;
+					if(isMouseInControl(2))seekBind=1;
+					if(isMouseInControl(3))seekBind=2;
+				}else{
+					var mr=e.button===2?-2:-1;
+					if(seekBind===1&&keyMap.JUMP!==mr){keyMap.CROUCH=mr;seekBind=0;}
+					if(seekBind===2&&keyMap.CROUCH!==mr){keyMap.JUMP=mr;seekBind=0;}
+					saveKeyMap();
+				}
+			}else gameState=0;
+		});
+		document.addEventListener("keydown",function(e){
+			if(gameState===2&&seekBind>0&&e.which!==undefined){
+				if(seekBind===1&&keyMap.JUMP!==e.which){keyMap.CROUCH=e.which;seekBind=0;}
+				if(seekBind===2&&keyMap.CROUCH!==e.which){keyMap.JUMP=e.which;seekBind=0;}
+				saveKeyMap();
+			}else if(gameState===1){
+				if(keyMap.CROUCH===e.which&&ckp===false){crouch();ckp=true;}
+				else if(keyMap.JUMP===e.which&&jkp===false){jump();jkp=true;}
+			}
+		});
+		document.addEventListener("keyup",function(e){
+			if(gameState===1){
+				if(e.which===keyMap.CROUCH){crouched=false;ckp=false;}
+				if(e.which===keyMap.JUMP){jkp=false;}
+			}
+		});
+		l('c').addEventListener("mouseup",function(e){
+			if(gameState===1){
+				if(e.button===0 && keyMap.CROUCH===-1 || e.button===2 && keyMap.CROUCH===-2)crouched=false;
+			}
+		});
+		l('c').addEventListener("contextmenu",function(e){
+			e.preventDefault();
+			return false;
+		});
+		function saveKeyMap(){
+			if(typeof(Storage) === "undefined"||!localStorage){console.log("Unable to save: no storage availible.");return;};
+			localStorage.keyMap=JSON.stringify(keyMap);
+		}
+		function saveHighScore(){
+			if(typeof(Storage) === "undefined"||!localStorage){console.log("Unable to save: no storage availible.");return;};
+			localStorage.HS=highScore;
+		}
+		function loadUp(){
+			if(typeof(Storage) === "undefined"||!localStorage){console.log("Unable to load: no storage availible.");return;};
+			if(localStorage.keyMap){
+				var km=JSON.parse(localStorage.keyMap);
+				keyMap=km;
+			}
+			if(localStorage.HS){
+				highScore=+localStorage.HS;
+			}
+		}
+		function startGame(){
+			gameState=1;//Pre-game initialization
+			if(musicOn)l("theMusic").play();
+			speed=4;
+			position=0;
+			player={y:-25.1,yv:0};
+			playerAnimation=0;
+			gameTicks=0;
+			stars=[];
+			obstacles=[];
+			crouched=false;
+			for(var i=0;i<30;i++)stars.push({x:Math.floor(Math.random()*canvas.width),y:Math.floor(Math.random()*canvas.height/3-50)});
+			if(firstGame){
+				obstacles.push({type:OBSTACLES.NONE,isTop:false,x1:0,x2:0,y1:0,y2:0,range:canvas.width*2});
+				obstacles.push({type:OBSTACLES.TERRAIN,isTop:false,x1:0,x2:0,y1:0,y2:0,range:canvas.width*3});
+				obstacles.push({type:OBSTACLES.RECTANGLE,isTop:false,x1:canvas.width*0.5,x2:canvas.width*0.5+15,y1:20,y2:0,range:0});
+				obstacles.push({type:OBSTACLES.RECTANGLE,isTop:true,x1:canvas.width*1.5,x2:canvas.width*1.5+15,y1:75,y2:55,range:0});
+			}
+		}
+		function isMouseInControl(cID){
+			switch(cID){
+				case 0:
+					return (mouseX>canvas.width/2-200 && mouseX<canvas.width/2+200 && mouseY>250 && mouseY<350);break;
+				case 1:
+					return (mouseX>canvas.width/2-200 && mouseX<canvas.width/2+200 && mouseY>375 && mouseY<475);break;
+				case 2://Crouch keybind
+					return (mouseX>300 && mouseX<425 && mouseY>185 && mouseY<225);break;
+				case 3://Jump keybind
+					return (mouseX>300 && mouseX<425 && mouseY>245 && mouseY<285);break;
+				case 4:
+					return mouseX>500 && mouseX<625 && mouseY>185 && mouseY< 225;break;
+			}
+			return false;
+		}
+		function getClosestTerrainChange(p,checkRight){
+			var smallestX1;
+			if(checkRight){
+					smallestX1=100000000;
+					for(var o in obstacles){
+						if(obstacles[o].type===OBSTACLES.TERRAIN && p<obstacles[o].x1 && obstacles[o].x1<smallestX1)smallestX1=obstacles[o].x1;
+					}
+			}else{
+				smallestX1=0;
+				for(var o in obstacles){
+					if(obstacles[o].type===OBSTACLES.TERRAIN && p>obstacles[o].x1 && obstacles[o].x1>smallestX1)smallestX1=obstacles[o].x1;
+				}
+			}
+			return smallestX1;
+		}
+		function getBaseTerrain(p){
+			var bestObstacle=-1, resultTerrain = -25;
+			for(var o in obstacles){
+				if(obstacles[o].type===OBSTACLES.TERRAIN && p>obstacles[o].x1 && obstacles[o].x1>bestObstacle){
+					bestObstacle=obstacles[o].x1;
+					resultTerrain=obstacles[o].y1;
+				}
+			}
+			return resultTerrain;
+		}
+		function jump(){
+			if(player.y<getBaseTerrain(position+PLAYER_OFFSET)&&!crouched)player.yv=11;
+		}
+		function crouch(){
+			crouched=true;
+			//setTimeout(function(){crouched=false;},1200);
+		}
+		function isCrouched(){
+			return player.y<getBaseTerrain(position+PLAYER_OFFSET)&&crouched;
+		}
+		function update(){
+			if(gameState===1){
+				//Update scrolling
+				position+=speed;
+				if(position>ppos+speed*10)hacked=true;
+				ppos=position;//3+(x/3)^0.5
+				gameTicks++
+				speed=4+Math.sqrt(gameTicks/150);
+				curTerrainLevel=Math.max(getBaseTerrain(position+PLAYER_OFFSET-PLAYER_WIDTH/2),getBaseTerrain(position+PLAYER_OFFSET+PLAYER_WIDTH/2));
+				var lowTerrainLevel=Math.min(getBaseTerrain(position+PLAYER_OFFSET-PLAYER_WIDTH/2),getBaseTerrain(position+PLAYER_OFFSET+PLAYER_WIDTH/2));
+				//Check for deaths here
+				var h=isCrouched()?PLAYER_HEIGHT.CROUCHED:PLAYER_HEIGHT.STANDING,collided=false;
+				for(var o in obstacles){
+					if(obstacles[o].x2>position-DISTANCE_BETWEEN_BARS&&obstacles[o].x1<position+canvas.width){
+						if(position+PLAYER_OFFSET-PLAYER_WIDTH/2<obstacles[o].x2 && position+PLAYER_OFFSET+PLAYER_WIDTH/2>obstacles[o].x1 && player.y+h>obstacles[o].y2 && player.y<obstacles[o].y1){
+							collided=true;
+							break;
+						}
+					}
+				}
+				//if(player.y<lowTerrainLevel-1)collided=true;
+				if(collided)die();
+				//Update player
+				if(player.y>curTerrainLevel||player.yv>0){
+					player.y+=player.yv;
+					player.yv+=GRAVITY;
+				}
+				if(player.y<curTerrainLevel){
+					player.y=curTerrainLevel-0.5;
+					playerAnimation=playerAnimation>=1?0:playerAnimation+Math.min(0.03,0.02+0.001*(speed-3));
+				}
+				//Generate obstacles
+				
+				if(canGen(position+canvas.width+4)&&canGen(position+canvas.width-4)){
+					var hL=getBaseTerrain(position+canvas.width)+20;
+					if(Math.random()<0.005){//1% chance per pixel
+						var h=Math.min(Math.max(getBaseTerrain(position+canvas.width)+(20)*(Math.floor(Math.random()*2)*2-1),-canvas.height/3),canvas.height/6);
+						obstacles.push({type:OBSTACLES.TERRAIN,isTop:false,x1:position+canvas.width,x2:position+canvas.width,y1:h,y2:h,range:300});
+					}else if(Math.random()<0.02){//obstacle series
+						var n=Math.floor(Math.random()*(Math.floor(speed)))+2,a=Math.floor(Math.random()*2),pa=!a,x=position+canvas.width, first=true;
+						for(var i=0;i<n;i++){
+							pa=a;//can gen
+							obstacles.push({type:OBSTACLES.RECTANGLE,isTop:(!!a),x1:x,x2:x+(speed<6?15:30),y1:hL+55*a,y2:hL+55*a-20,range:(first?Math.max(160,(100+16*speed))*n:Math.max(200,500-gameTicks/5))});
+							first=false;
+							a=Math.floor(Math.random()*2);
+							x+=Math.max(120,pa==0&&a==0?100+22*speed:100+13*speed);
+						}
+					}else if(Math.random()<0.01){//long jump
+						obstacles.push({type:OBSTACLES.RECTANGLE,isTop:false,x1:position+canvas.width,x2:position+canvas.width+(speed<6?14:(speed<9?16:18))*speed,y1:hL,y2:hL-20,range:100+Math.min(22*speed,200)});
+					}
+				}
+			}
+		}
+		function canGen(p){
+			for(var o in obstacles){
+				if(obstacles[o].x1<p && p<obstacles[o].x2+obstacles[o].range){
+					return false;
+				}
+			}
+			return true;
+		}
+		function die(){
+			l("theMusic").pause();
+			l("theMusic").currentTime=0;
+			if(position>canvas.width/2)firstGame=false;
+			gameState=4;
+			var score=Math.floor(position/10);
+			if(score>highScore)highScore=score;
+			saveHighScore();
+			if(!hacked&&score<1000000){
+				//Submit to Kongregate here
+			}
+		}
+		function formatToScore(n){
+			var sn = String(Math.floor(n)), r = "";
+			for(var i=0;i<6-sn.length;i++)r+="0";
+			return r+sn;
+		}
+		function render(){
+			var g = canvas.getContext("2d");
+			canvas.width = canvas.width;
+			g.fillStyle='#000';
+			g.rect(0,0,canvas.width,canvas.height);
+			g.fill();
+			g.textAlign = 'center';
+			if(gameState===1){
+				g.globalAlpha=1;
+				g.lineWidth=4;
+				g.strokeStyle='#12B751';
+				g.fillStyle='#031700';
+				var t = getBaseTerrain(position),newBold=0,stc=getClosestTerrainChange(position,false),i,nextI,ot;
+				if(stc===0)i=-position%DISTANCE_BETWEEN_BARS;
+				else i=-(position-stc)%DISTANCE_BETWEEN_BARS;
+				i-=DISTANCE_BETWEEN_BARS*2;
+				while(i<canvas.width+DISTANCE_BETWEEN_BARS*2){
+					newBold--;
+					var nt=getBaseTerrain(position+i+DISTANCE_BETWEEN_BARS);
+					if(t!==nt){
+						nextI = getClosestTerrainChange(position+i-10,true)-position;
+						newBold=2;
+					}else{
+						nextI=i+DISTANCE_BETWEEN_BARS;
+					}
+					g.beginPath();
+					g.lineWidth=4;
+					g.moveTo(i,canvas.height/2-t-25);
+					g.lineTo(nextI-(nt-t>0?Math.min(20,(nt-t)/2.5):0),canvas.height/2-t-25);
+					g.moveTo(i-20,canvas.height/2-t+25);
+					g.lineTo(nextI-20,canvas.height/2-t+25);
+					g.stroke();
+					g.beginPath();
+					g.moveTo(i,canvas.height/2-t-25);
+					g.lineTo(nextI-(nt-t>0?Math.min(20,(nt-t)/2.5):0),canvas.height/2-t-25);
+					g.lineTo(nextI-20,canvas.height/2-t+25);
+					g.lineTo(i-20,canvas.height/2-t+25);
+					g.closePath();
+					g.fill();
+					g.beginPath();
+					g.lineWidth=newBold===1?4:1;
+					g.moveTo(i,canvas.height/2-t-25);
+					g.lineTo(i-20,canvas.height/2+25-t);
+					g.lineTo(i-20,canvas.height);
+					if(newBold===1&&t<ot){
+						g.moveTo(i,canvas.height/2-t-25);
+						g.lineTo(i,canvas.height/2-ot-27);
+						g.moveTo(i-20,canvas.height/2-t+25);
+						g.lineTo(i-20,canvas.height/2-ot+23);
+						g.moveTo(i,canvas.height/2-ot-25);
+						g.lineTo(i-20,canvas.height/2+25-ot);
+					}
+					g.stroke();
+					ot=t;
+					t=nt;
+					i=nextI;
+				}
+				drawObstacles(g, false);
+				//player:
+				var h=isCrouched()?PLAYER_HEIGHT.CROUCHED:PLAYER_HEIGHT.STANDING;
+				var x=PLAYER_OFFSET-PLAYER_WIDTH/2,y=canvas.height/2-h-player.y;
+				drawPlayer(g, x, y, h);
+				drawObstacles(g, true);
+				g.fillStyle='#E0EFFF';
+				for(var i in stars)g.fillRect(stars[i].x,stars[i].y,2,2);
+				g.fillStyle='#12B751';
+				g.font="48px Courier";
+				g.fillText(formatToScore(position/10),90,35);
+				if(firstGame&&position<canvas.width*2){//Tutorial
+					g.strokeStyle='#12B751';
+					g.globalAlpha=position<canvas.width?Math.min(1,2.5-Math.abs(2.5-5*(position/canvas.width),1)):0;
+					g.strokeRect(500,100,90,60);
+					g.fillText(getBindText(true),545,145);
+					g.fillText("JUMP",545,200);
+					g.globalAlpha=position>canvas.width?Math.min(1,2.5-Math.abs(2.5-5*(position/canvas.width-1),1)):0;
+					g.strokeRect(500,100,90,60);
+					g.fillText(getBindText(false),545,145);
+					g.fillText("ROLL",545,200);
+				}
+			}else if(gameState===0){
+				g.lineWidth=9;
+				g.strokeStyle='#12B751';
+				g.strokeRect(30,30,canvas.width-60,canvas.height-60);
+				g.fillStyle=PLAYER_COLOR;
+				g.font="120px Courier";
+				g.fillText("N ghtRun",canvas.width/2,170);
+				playerAnimation=0.1;
+				drawPlayer(g,canvas.width/2-195,116,PLAYER_HEIGHT.STANDING);
+				g.fillStyle='#12B751';
+				g.strokeStyle='#12B751';
+				g.font="85px Courier";
+				g.lineWidth=6;
+				g.globalAlpha=isMouseInControl(0)?1:0.7;//Mouse over "PLAY" button
+				g.strokeRect(canvas.width/2-200,250,400,100);
+				g.fillText("PLAY",canvas.width/2,325);
+				g.font="70px Courier";
+				g.globalAlpha=isMouseInControl(1)?1:0.7;//Mouse over "OPTIONS" button
+				g.strokeRect(canvas.width/2-200,375,400,100);
+				g.fillText("OPTIONS",canvas.width/2,445);
+				g.globalAlpha=1;
+				g.font="48px Courier";
+				g.fillText("HIGH SCORE\n"+formatToScore(highScore), canvas.width/2, 520);
+			}else if(gameState===2){//Options screen
+				g.lineWidth=9;
+				g.strokeStyle='#12B751';
+				g.fillStyle='#12B751';
+				g.strokeRect(30,30,canvas.width-60,canvas.height-60);
+				g.font="100px Courier";
+				g.fillText("OPTIONS",canvas.width/2,125);
+				g.font="50px Courier";
+				g.fillText("ROLL",120,220);
+				g.fillText("JUMP",120,280);
+				g.lineWidth=3;
+				g.font="40px Courier";
+				g.globalAlpha=isMouseInControl(2)?1:0.7;//Mouse over "CROUCH" keybind
+				g.strokeRect(300, 185, 125, 40);
+				g.fillText(getBindText(false),362,215);
+				g.globalAlpha=isMouseInControl(3)?1:0.7;//Mouse over "CROUCH" keybind
+				g.strokeRect(300, 245, 125, 40);
+				g.fillText(getBindText(true),362,275);
+				g.globalAlpha=1;
+				g.fillText("© ryabtsev 2015",canvas.width/2,canvas.height-40);
+				g.strokeRect(500, 185, 125, 40);
+				if(musicOn)g.fillRect(500, 185, 125, 40);
+				g.fillStyle=musicOn?'#000':'#12B751';
+				g.fillText("MUSIC",562,215);
+				
+				g.fillStyle='#12B751';
+				g.font="70px Courier";
+				g.lineWidth=6;
+				g.globalAlpha=isMouseInControl(1)?1:0.7;//Mouse over "SAVE" button
+				g.strokeRect(canvas.width/2-200,375,400,100);
+				g.fillText("SAVE",canvas.width/2,445);
+			}else if(gameState===4){
+				g.strokeStyle='#12B751';
+				g.fillStyle='#12B751';
+				g.font='120px Courier';
+				g.fillText("GAME OVER",canvas.width/2,200);
+				g.font='80px Courier';
+				g.fillText(formatToScore(position/10),canvas.width/2,350);
+				g.font='36px Courier';
+				g.fillText("(CLICK ANYWHERE TO RETURN TO MAIN MENU)",canvas.width/2,450);
+			}
+		}
+		function getBindText(jump){
+			if(jump){
+				if(seekBind===2)return "???";
+				if(keyMap.JUMP<0)return "M"+(-keyMap.JUMP);
+				return String.fromCharCode(keyMap.JUMP).toUpperCase();
+			}else{
+				if(seekBind===1)return "???";
+				if(keyMap.CROUCH<0)return "M"+(-keyMap.CROUCH);
+				return String.fromCharCode(keyMap.CROUCH).toUpperCase();
+			}
+			return "ERR";
+		}
+		function drawObstacles(g, drawTop){
+			g.strokeStyle='#D60606';
+			g.fillStyle='#1F0000';
+			for(var o in obstacles){
+				var me=obstacles[o];
+				if(me.isTop===drawTop && me.x1<position+canvas.width&&me.x2>position-DISTANCE_BETWEEN_BARS){
+					if(me.type===OBSTACLES.RECTANGLE){
+						g.lineWidth=6;
+						g.beginPath();
+						g.moveTo(me.x1-position+18,canvas.height/2-me.y1-25);
+						g.lineTo(me.x2-position+20,canvas.height/2-me.y1-25);
+						g.lineTo(me.x2-position+20,canvas.height/2-me.y2-25);
+						g.lineTo(me.x2-position,canvas.height/2-me.y2+25);
+						g.lineTo(me.x1-position,canvas.height/2-me.y2+25);
+						g.lineTo(me.x1-position,canvas.height/2-me.y1+25);
+						g.lineTo(me.x1-position+20,canvas.height/2-me.y1-26);
+						g.stroke();
+						g.fill();
+						g.lineWidth=3;
+						g.beginPath();
+						g.moveTo(me.x1-position,canvas.height/2-me.y1+25);
+						g.lineTo(me.x2-position,canvas.height/2-me.y1+25);
+						g.lineTo(me.x2-position,canvas.height/2-me.y2+25);
+						g.moveTo(me.x2-position,canvas.height/2-me.y1+25);
+						g.lineTo(me.x2-position+20,canvas.height/2-me.y1-25);
+						g.stroke();
+						
+					}
+				}
+			}
+		}
+		function drawPlayer(g,x,y, h){
+			g.strokeStyle=PLAYER_COLOR;
+			g.fillStyle=PLAYER_COLOR;
+			g.lineWidth=2;
+			if(!(gameState===1 && isCrouched())){
+				g.beginPath();
+				g.arc(x+PLAYER_WIDTH/2,y-1+PLAYER_WIDTH/2,PLAYER_WIDTH*0.3,0,Math.PI*2);
+				g.moveTo(x+PLAYER_WIDTH*0.4,y-1+PLAYER_WIDTH*0.8);
+				g.lineTo(x+PLAYER_WIDTH*0.45,y-1+PLAYER_WIDTH*0.8+25);
+				var xx=x+PLAYER_WIDTH*0.45, yy=y-1+PLAYER_WIDTH*0.8+25;
+				var cX,cY,fX,fY,pa=2*Math.abs(playerAnimation-0.5),nx,ny;
+				cX=-24*pa+14.8;cY=-15.34*Math.pow(pa,2)+50.98*pa-15;fX=140.63*Math.pow(pa,3)-203.1*Math.pow(pa,2)+46.25*pa+6,fY=-39.3*Math.pow(pa,2)+32.4*pa+8.7;
+				g.quadraticCurveTo(xx+cX,yy+cY,xx+fX,yy+fY);
+				g.stroke();
+				g.moveTo(xx,yy);
+				pa=2*Math.abs((playerAnimation+0.42)%1-0.5);//one leg 42% ahead of the other
+				cX=-24*pa+14.8;cY=-15.34*Math.pow(pa,2)+50.98*pa-15;fX=140.63*Math.pow(pa,3)-203.1*Math.pow(pa,2)+46.25*pa+6,fY=-39.3*Math.pow(pa,2)+32.4*pa+8.7;
+				g.quadraticCurveTo(xx+cX,yy+cY,xx+fX,yy+fY);
+				g.stroke();
+				yy-=22;
+				g.moveTo(xx,yy);
+				nx=xx+11*Math.sin((-0.25+0.5*pa)*Math.PI);ny=yy+11*Math.cos((-0.25+0.5*pa)*Math.PI);
+				g.lineTo(nx,ny);
+				g.lineTo(nx+12,ny-4);
+				g.stroke();
+				g.moveTo(xx,yy);
+				pa=2*Math.abs(playerAnimation-0.5);
+				nx=xx+9*Math.sin((-0.25+0.5*pa)*Math.PI);ny=yy+9*Math.cos((-0.25+0.5*pa)*Math.PI);
+				g.lineTo(nx,ny);
+				g.lineTo(nx+9,ny-1);
+				g.stroke();
+				g.beginPath();
+				g.arc(x+PLAYER_WIDTH/2+3,y-3+PLAYER_WIDTH/2,2,0,Math.PI*2);
+				g.fill();
+			}else{//Rolling: 26x26
+				g.translate(x+13,y+13);
+				g.rotate(playerAnimation*4*Math.PI);
+				g.translate(-13,-13);
+				g.beginPath();
+				g.arc(20,5,7.5,0,2*Math.PI);
+				g.stroke();
+				g.beginPath();
+				g.arc(10,8,10,Math.PI*0.95,Math.PI*1.65);
+				g.stroke();
+				g.moveTo(0,10);
+				g.quadraticCurveTo(20,10,5,25);
+				g.moveTo(0,10);
+				g.quadraticCurveTo(20,10,11,23);
+				g.moveTo(8,-1);
+				g.lineTo(7,7);
+				g.moveTo(11,-1);
+				g.lineTo(10,7);
+				g.stroke();
+				g.beginPath();
+				g.arc(20,9,2,0,Math.PI*2);
+				g.fill();
+				g.setTransform(1, 0, 0, 1, 0, 0);
+			}
+		}
+		setInterval(run,0);
+	}
+	window.onload=init;
+</script>
+</head>
+<body style="margin: 0;">
+<canvas id="c" width="800" height="600"></canvas>
+<audio id="theMusic" src="music.mp3" preload="auto"></audio>
+</body>
+</html>
